@@ -1,0 +1,29 @@
+name: Daily CRT Market Brief
+
+on:
+  push:
+    branches: [ "main" ]
+  schedule:
+    # 01:30 UTC = 06:30 AM PKT (Monday to Friday)
+    - cron: '30 1 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  run-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: pip install requests pytz
+
+      - name: Run CRT Engine
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python market_brief.py
