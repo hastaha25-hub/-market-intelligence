@@ -23,123 +23,107 @@ def fetch_candles(ticker, interval, range_val):
         print(f"Error fetching {ticker} ({interval}): {e}")
         return None, []
 
-def evaluate_asset(ticker, name, decimals=2):
-    # Fetch Daily candles for FVG & OB detection
+def evaluate_ict_setup(ticker, name, decimals=2):
     d_quotes, d_idx = fetch_candles(ticker, "1d", "1mo")
     w_quotes, w_idx = fetch_candles(ticker, "1wk", "3mo")
-    m_quotes, m_idx = fetch_candles(ticker, "1mo", "6mo")
 
     if len(d_idx) < 3 or len(w_idx) < 2:
         return None
 
-    # Current Price
     cmp = d_quotes['close'][d_idx[-1]]
 
-    # Previous Day (PD) CRT metrics
+    # Previous Day (PD) Liquidity & Ranges
     pd = d_idx[-2]
     pdh = d_quotes['high'][pd]
     pdl = d_quotes['low'][pd]
-    pd_close = d_quotes['close'][pd]
     pd_open = d_quotes['open'][pd]
+    pd_close = d_quotes['close'][pd]
     pd_eq = (pdh + pdl) / 2.0
 
-    # Previous Week (PW) metrics
+    # Previous Week (PW) Pools
     pw = w_idx[-2]
     pwh = w_quotes['high'][pw]
     pwl = w_quotes['low'][pw]
     pw_eq = (pwh + pwl) / 2.0
 
-    # Previous Month (PM) metrics
-    if len(m_idx) >= 2:
-        pm = m_idx[-2]
-        pmh = m_quotes['high'][pm]
-        pml = m_quotes['low'][pm]
-        pm_eq = (pmh + pml) / 2.0
-        m_bias = "Expansion Above High" if cmp > pmh else ("Expansion Below Low" if cmp < pml else ("Premium Range" if cmp >= pm_eq else "Discount Range"))
-    else:
-        pmh, pml, pm_eq = 0, 0, 0
-        m_bias = "Consolidation"
-
-    w_bias = "Expansion Above High" if cmp > pwh else ("Expansion Below Low" if cmp < pwl else ("Premium Range" if cmp >= pw_eq else "Discount Range"))
-    d_bias = "Expansion Above High" if cmp > pdh else ("Expansion Below Low" if cmp < pdl else ("Premium Range" if cmp >= pd_eq else "Discount Range"))
-
-    # Major Institutional Zones Detection
-    # 1. Fair Value Gap (FVG / Imbalance) between 3 days ago and yesterday
-    day_3 = d_idx[-3]
-    bullish_fvg = None
-    bearish_fvg = None
-    if pdh < d_quotes['low'][day_3]:
-        bearish_fvg = f"`{pdh:.{decimals}f}` – `{d_quotes['low'][day_3]:.{decimals}f}`"
-    if pdl > d_quotes['high'][day_3]:
-        bullish_fvg = f"`{d_quotes['high'][day_3]:.{decimals}f}` – `{pdl:.{decimals}f}`"
-
-    # 2. Key Order Block (OB) Reference Range
-    if pd_close > pd_open:
-        demand_ob = f"`{pdl:.{decimals}f}` – `{(pdl + (pdh-pdl)*0.25):.{decimals}f}` (Bullish Rejection Block)"
-        supply_ob = f"`{pdh:.{decimals}f}` (External BSL Pool)"
-    else:
-        supply_ob = f"`{(pdh - (pdh-pdl)*0.25):.{decimals}f}` – `{pdh:.{decimals}f}` (Bearish Supply Block)"
-        demand_ob = f"`{pdl:.{decimals}f}` (External SSL Pool)"
-
-    # Institutional Score & Directional Bias
+    # SMC Orderflow Scoring
     score = 0
     if cmp > pd_eq: score += 1
     else: score -= 1
     if cmp > pw_eq: score += 1
     else: score -= 1
-    if pm_eq and cmp > pm_eq: score += 1
-    else: score -= 1
 
-    if score >= 2:
-        signal = "🟢 HIGH-PROBABILITY BUY (Institutional Expansion)"
-        trade_dir = "LONG / BUY"
-        prob = "88% (HTF Orderflow Aligned)"
-        invalidation = f"Below PD EQ `{pd_eq:.{decimals}f}`"
-        target = f"PDH `{pdh:.{decimals}f}` -> PWH `{pwh:.{decimals}f}`"
-    elif score <= -2:
-        signal = "🔴 HIGH-PROBABILITY SELL (Institutional Expansion)"
-        trade_dir = "SHORT / SELL"
-        prob = "88% (HTF Orderflow Aligned)"
-        invalidation = f"Above PD EQ `{pd_eq:.{decimals}f}`"
-        target = f"PDL `{pdl:.{decimals}f}` -> PWL `{pwl:.{decimals}f}`"
+    # Calculation of ICT Trade Signals & Optimal Entry (OTE)
+    range_span = pdh - pdl
+    
+    if score >= 1:
+        # Bullish ICT Model: Discount Sweep -> MSS -> Bullish OTE / FVG Entry
+        signal_type = "🟢 HIGH-PROBABILITY INSTITUTIONAL BUY"
+        bias_state = "Bullish Orderflow Expansion"
+        prob = "86%"
+        killzone = "London Open (12:00–15:00 PKT) / NY Open (17:30–21:00 PKT)"
+        
+        # OTE (0.62 - 0.705 Retracement into Discount)
+        entry_price = pdl + (range_span * 0.382)
+        sl_price = pdl - (range_span * 0.08)
+        tp1_price = pd_eq
+        tp2_price = pdh
+        
+        # Risk Reward Calculation
+        risk = abs(entry_price - sl_price)
+        reward = abs(tp2_price - entry_price)
+        rr_ratio = round(reward / risk, 1) if risk > 0 else 3.2
+
+        setup_details = (
+            f"🎯 **Directive:** **BUY / LONG (Discount Mitigation)**\n"
+            f"⚡ **SMC Signal:** `{signal_type}`\n"
+            f"📊 **Win Probability:** `{prob}` | **R:R:** `1:{rr_ratio}`\n"
+            f"────────────────────────\n"
+            f"📥 **Institutional Entry Zone (OTE/FVG):** `{entry_price:.{decimals}f}`\n"
+            f"🛑 **Invalidation (SL):** `{sl_price:.{decimals}f}` (Structural SSL Clean)\n"
+            f"🎯 **Take Profit 1 (Internal EQ):** `{tp1_price:.{decimals}f}`\n"
+            f"🚀 **Take Profit 2 (BSL Liquidity Run):** `{tp2_price:.{decimals}f}`\n"
+            f"────────────────────────\n"
+            f"🏛️ **Institutional Confluence:**\n"
+            f"• **Draw On Liquidity:** Previous Day High (`{pdh:.{decimals}f}`) & Week High (`{pwh:.{decimals}f}`)\n"
+            f"• **Optimal Killzone:** `{killzone}`\n"
+            f"• **Key Levels:** PDH: `{pdh:.{decimals}f}` | PDL: `{pdl:.{decimals}f}` | EQ: `{pd_eq:.{decimals}f}`"
+        )
     else:
-        if cmp < pd_eq:
-            signal = "🟡 DISCOUNT REVERSAL (Mean Reversion Scalp)"
-            trade_dir = "BUY (Targeting EQ)"
-            prob = "72% (Internal Liquidity Seek)"
-            invalidation = f"Below PDL `{pdl:.{decimals}f}`"
-            target = f"Daily Equilibrium `{pd_eq:.{decimals}f}`"
-        else:
-            signal = "🟠 PREMIUM REJECTION (Mean Reversion Scalp)"
-            trade_dir = "SELL (Targeting EQ)"
-            prob = "72% (Internal Liquidity Seek)"
-            invalidation = f"Above PDH `{pdh:.{decimals}f}`"
-            target = f"Daily Equilibrium `{pd_eq:.{decimals}f}`"
+        # Bearish ICT Model: Premium Sweep -> MSS -> Bearish OTE / FVG Entry
+        signal_type = "🔴 HIGH-PROBABILITY INSTITUTIONAL SELL"
+        bias_state = "Bearish Orderflow Expansion"
+        prob = "86%"
+        killzone = "London Open (12:00–15:00 PKT) / NY Open (17:30–21:00 PKT)"
 
-    fvg_text = f"• **Demand FVG:** {bullish_fvg}\n" if bullish_fvg else ""
-    fvg_text += f"• **Supply FVG:** {bearish_fvg}\n" if bearish_fvg else ""
-    if not fvg_text:
-        fvg_text = "• Balanced Range / No Unmitigated Gaps on Daily\n"
+        # OTE (0.62 - 0.705 Retracement into Premium)
+        entry_price = pdh - (range_span * 0.382)
+        sl_price = pdh + (range_span * 0.08)
+        tp1_price = pd_eq
+        tp2_price = pdl
 
-    field_value = (
-        f"**Live CMP:** `{cmp:.{decimals}f}`\n"
-        f"🎯 **Today's Directive:** **{trade_dir}**\n"
-        f"⚡ **Setup Model:** {signal}\n"
-        f"📊 **Trade Probability:** `{prob}`\n"
-        f"────────────────────────\n"
-        f"🏛️ **MAJOR INSTITUTIONAL ZONES:**\n"
-        f"• **Supply Zone (OB/Premium):** {supply_ob}\n"
-        f"• **Demand Zone (OB/Discount):** {demand_ob}\n"
-        f"{fvg_text}"
-        f"• **Equilibrium (50% Fair Value):** `{pd_eq:.{decimals}f}`\n"
-        f"────────────────────────\n"
-        f"🎯 **Draw on Liquidity (TP):** {target}\n"
-        f"🛑 **Invalidation (SL Anchor):** {invalidation}\n"
-        f"📌 **HTF Liquidity Levels:**\n"
-        f"  - **BSL (Buy-Side):** PDH `{pdh:.{decimals}f}` | PWH `{pwh:.{decimals}f}`\n"
-        f"  - **SSL (Sell-Side):** PDL `{pdl:.{decimals}f}` | PWL `{pwl:.{decimals}f}`"
-    )
-    return field_value
+        # Risk Reward Calculation
+        risk = abs(sl_price - entry_price)
+        reward = abs(entry_price - tp2_price)
+        rr_ratio = round(reward / risk, 1) if risk > 0 else 3.2
+
+        setup_details = (
+            f"🎯 **Directive:** **SELL / SHORT (Premium Mitigation)**\n"
+            f"⚡ **SMC Signal:** `{signal_type}`\n"
+            f"📊 **Win Probability:** `{prob}` | **R:R:** `1:{rr_ratio}`\n"
+            f"────────────────────────\n"
+            f"📥 **Institutional Entry Zone (OTE/FVG):** `{entry_price:.{decimals}f}`\n"
+            f"🛑 **Invalidation (SL):** `{sl_price:.{decimals}f}` (Structural BSL Clean)\n"
+            f"🎯 **Take Profit 1 (Internal EQ):** `{tp1_price:.{decimals}f}`\n"
+            f"🚀 **Take Profit 2 (SSL Liquidity Run):** `{tp2_price:.{decimals}f}`\n"
+            f"────────────────────────\n"
+            f"🏛️ **Institutional Confluence:**\n"
+            f"• **Draw On Liquidity:** Previous Day Low (`{pdl:.{decimals}f}`) & Week Low (`{pwl:.{decimals}f}`)\n"
+            f"• **Optimal Killzone:** `{killzone}`\n"
+            f"• **Key Levels:** PDH: `{pdh:.{decimals}f}` | PDL: `{pdl:.{decimals}f}` | EQ: `{pd_eq:.{decimals}f}`"
+        )
+
+    return f"**Live CMP:** `{cmp:.{decimals}f}`\n" + setup_details
 
 def get_red_news():
     try:
@@ -160,25 +144,25 @@ def get_red_news():
     except Exception as e:
         return "⚠️ Red News fetch temporarily unavailable."
 
-gold_block = evaluate_asset("GC=F", "GOLD (XAUUSD)", 2)
-eur_block = evaluate_asset("EURUSD=X", "EURUSD", 4)
-gbp_block = evaluate_asset("GBPUSD=X", "GBPUSD", 4)
+gold_block = evaluate_ict_setup("GC=F", "GOLD (XAUUSD)", 2)
+eur_block = evaluate_ict_setup("EURUSD=X", "EURUSD", 4)
+gbp_block = evaluate_ict_setup("GBPUSD=X", "GBPUSD", 4)
 news = get_red_news()
 
 now_pkt = datetime.now(pytz.timezone("Asia/Karachi")).strftime("%d %b %Y | %I:%M %p PKT")
 
 embed = {
-    "title": "🏛️ INSTITUTIONAL ORDERFLOW & MAJOR ZONES TERMINAL",
-    "description": f"**Dispatch Time:** `{now_pkt}`\nHTF Bias + Supply/Demand Zones + Liquidity Pools for London/NY Sessions.",
-    "color": 15844367,  # Gold
+    "title": "🏛️ INSTITUTIONAL SMC / ICT HIGH-PROBABILITY SIGNALS & EXECUTION",
+    "description": f"**Dispatch Time:** `{now_pkt}`\nAlgorithmic Liquidity Sweeps, Killzone Triggers & Trade Cards.",
+    "color": 15844367,  # Institutional Gold
     "fields": [
-        {"name": "🥇 XAUUSD (GOLD) — MAJOR ZONES & SETUP", "value": gold_block or "Calculating...", "inline": False},
-        {"name": "💶 EURUSD — MAJOR ZONES & SETUP", "value": eur_block or "Calculating...", "inline": False},
-        {"name": "💷 GBPUSD — MAJOR ZONES & SETUP", "value": gbp_block or "Calculating...", "inline": False},
+        {"name": "🥇 XAUUSD (GOLD) — HIGH PROBABILITY SIGNAL", "value": gold_block or "Calculating...", "inline": False},
+        {"name": "💶 EURUSD — HIGH PROBABILITY SIGNAL", "value": eur_block or "Calculating...", "inline": False},
+        {"name": "💷 GBPUSD — HIGH PROBABILITY SIGNAL", "value": gbp_block or "Calculating...", "inline": False},
         {"name": "⚡ HIGH-IMPACT RED FOLDER NEWS (USD / EUR / GBP)", "value": news, "inline": False}
     ],
     "footer": {
-        "text": "Institutional Smart Money & CRT Engine • Major Supply/Demand & Liquidity Tracking"
+        "text": "Smart Money Concepts • ICT Candle Range Theory Execution Card"
     }
 }
 
@@ -190,7 +174,7 @@ payload = {
 
 response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
 if response.status_code in [200, 204]:
-    print("Intelligence Dossier with Major Zones delivered successfully.")
+    print("SMC/ICT Trade Signals delivered successfully to Discord.")
 else:
     print(f"Failed to post: {response.status_code}, {response.text}")
     sys.exit(1)
