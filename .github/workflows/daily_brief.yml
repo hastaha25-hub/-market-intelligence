@@ -1,0 +1,22 @@
+name: Daily CRT Market Brief
+
+on:
+  schedule:
+    - cron: '30 1 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  run-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - run: pip install requests pytz
+
+      - env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python market_brief.py
