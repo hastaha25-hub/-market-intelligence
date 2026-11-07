@@ -1,6 +1,8 @@
 name: Daily CRT Market Brief
 
 on:
+  push:
+    branches: [ "main" ]
   schedule:
     # 01:30 UTC = 06:30 AM PKT (Monday to Friday)
     - cron: '30 1 * * 1-5'
